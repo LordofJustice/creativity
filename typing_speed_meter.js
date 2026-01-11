@@ -1,22 +1,20 @@
 import { brightGreen, brightRed, gray } from "@std/fmt/colors";
 
-const sentence =
+const TARGET_TEXT =
   'Two common terms used to describe a salesperson are "Farmer" and "Hunter". The reality is that most professional salespeople have a little of both.';
 
-const CURSOR = "|";
+const CURSOR_CHAR = "|";
 
-const calSpeedAndAccurecy = (typeCount, timeInMinutes, errorCount) => {
+const calculateWpmAndAccuracy = (typeCount, timeInMinutes, errorCount) => {
   const WPM = (typeCount / 5) / timeInMinutes;
-  const Accuracy = Math.round(
-    ((typeCount - errorCount) / typeCount) * 100,
-    3,
-  );
+  const Accuracy = ((typeCount - errorCount) / typeCount) * 100;
   return { WPM, Accuracy };
 };
 
 await Deno.stdin.setRaw(true, { cbreak: true });
 
 const decode = (encodedText) => new TextDecoder().decode(encodedText);
+
 const encode = (text) => new TextEncoder().encode(text);
 
 const write = async (text) => {
@@ -25,18 +23,18 @@ const write = async (text) => {
   await Deno.stdout.write(encodedText);
 };
 
-class PreviousText {
+class TypedText {
   #text;
   constructor() {
     this.#text = [];
   }
-  add(newText) {
+  append(newText) {
     this.#text.push(newText);
   }
-  previousText() {
+  toString() {
     return this.#text.join("");
   }
-  lenght() {
+  length() {
     return this.#text.length;
   }
   backspace() {
@@ -44,24 +42,24 @@ class PreviousText {
   }
 }
 
-const preTexts = new PreviousText();
+const typedText = new TypedText();
 
-const textColour = {
+const COLOUR_BY_STATUS = {
   "mistake": brightRed,
   "correct": brightGreen,
 };
 
 const updateScreen = async (sentence, cursor, status) => {
   if (status === "backspace") {
-    const text = preTexts.previousText() + CURSOR +
+    const text = typedText.toString() + CURSOR_CHAR +
       gray(sentence.slice(cursor));
     await write(text);
     return;
   }
-  const letter = textColour[status](sentence[cursor]);
-  const text = preTexts.previousText() + letter + CURSOR +
+  const letter = COLOUR_BY_STATUS[status](sentence[cursor]);
+  const text = typedText.toString() + letter + CURSOR_CHAR +
     gray(sentence.slice(cursor + 1));
-  preTexts.add(letter);
+  typedText.append(letter);
   await write(text);
 };
 
@@ -75,48 +73,48 @@ const displayResult = ({ WPM, Accuracy }) => {
 };
 
 const startTypingTest = async () => {
-  let cursor = 0;
+  let cursorPosition = 0;
   let typeCount = 0;
-  let errorCount = 0;
+  let mistakeCount = 0;
   let status;
 
   const startTime = Date.now();
 
-  write(gray(sentence));
+  write(gray(TARGET_TEXT));
 
   for await (const chunk of Deno.stdin.readable) {
     const decodedChunk = decode(chunk);
     if (decodedChunk === "\x7f") {
-      if (preTexts.lenght() === 0) continue;
-      preTexts.backspace();
-      updateScreen(sentence, cursor - 1, "backspace");
-      cursor--;
+      if (typedText.length() === 0) continue;
+      typedText.backspace();
+      updateScreen(TARGET_TEXT, cursorPosition - 1, "backspace");
+      cursorPosition--;
       continue;
     }
 
     status = "correct";
 
-    if (sentence[cursor] !== decodedChunk) {
-      errorCount++;
+    if (TARGET_TEXT[cursorPosition] !== decodedChunk) {
+      mistakeCount++;
       status = "mistake";
     }
 
-    await updateScreen(sentence, cursor, status);
-    cursor++;
-
-    if (cursor >= sentence.length) {
-      const endTime = Date.now();
-      const timeInMinutes = ((endTime - startTime) / 1000) / 60;
-      const speedAndAccurecy = calSpeedAndAccurecy(
-        typeCount,
-        timeInMinutes,
-        errorCount,
-      );
-      displayResult(speedAndAccurecy);
-      break;
-    }
+    await updateScreen(TARGET_TEXT, cursorPosition, status);
+    cursorPosition++;
 
     typeCount++;
+
+    if (cursorPosition >= TARGET_TEXT.length) {
+      const endTime = Date.now();
+      const timeInMinutes = ((endTime - startTime) / 1000) / 60;
+      const speedAndAccurecy = calculateWpmAndAccuracy(
+        typeCount,
+        timeInMinutes,
+        mistakeCount,
+      );
+      displayResult(speedAndAccurecy);
+      return;
+    }
   }
 };
 
