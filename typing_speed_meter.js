@@ -1,16 +1,9 @@
 import { brightGreen, brightRed, gray } from "@std/fmt/colors";
 
-const sentence = "hello world i am here";
+const sentence =
+  'Two common terms used to describe a salesperson are "Farmer" and "Hunter". The reality is that most professional salespeople have a little of both.';
 
-await Deno.stdin.setRaw(true, { cbreak: true });
-
-const decode = (encodedText) => new TextDecoder().decode(encodedText);
-const encode = (text) => new TextEncoder().encode(text);
-
-const write = async (text) => {
-  const encodedText = encode(text);
-  await Deno.stdout.write(encodedText);
-};
+const CURSOR = "|";
 
 const calSpeedAndAccurecy = (typeCount, timeInMinutes, errorCount) => {
   const WPM = (typeCount / 5) / timeInMinutes;
@@ -19,6 +12,17 @@ const calSpeedAndAccurecy = (typeCount, timeInMinutes, errorCount) => {
     3,
   );
   return { WPM, Accuracy };
+};
+
+await Deno.stdin.setRaw(true, { cbreak: true });
+
+const decode = (encodedText) => new TextDecoder().decode(encodedText);
+const encode = (text) => new TextEncoder().encode(text);
+
+const write = async (text) => {
+  console.clear();
+  const encodedText = encode(text);
+  await Deno.stdout.write(encodedText);
 };
 
 class PreviousText {
@@ -32,15 +36,30 @@ class PreviousText {
   previousText() {
     return this.#text.join("");
   }
+  lenght() {
+    return this.#text.length;
+  }
+  backspace() {
+    this.#text.pop();
+  }
 }
 
 const preTexts = new PreviousText();
 
-const updateScreen = async (sentence, cursor, isMistake) => {
-  const letter = isMistake
-    ? brightRed(sentence[cursor])
-    : brightGreen(sentence[cursor]);
-  const text = preTexts.previousText() + letter +
+const textColour = {
+  "mistake": brightRed,
+  "correct": brightGreen,
+};
+
+const updateScreen = async (sentence, cursor, status) => {
+  if (status === "backspace") {
+    const text = preTexts.previousText() + CURSOR +
+      gray(sentence.slice(cursor));
+    await write(text);
+    return;
+  }
+  const letter = textColour[status](sentence[cursor]);
+  const text = preTexts.previousText() + letter + CURSOR +
     gray(sentence.slice(cursor + 1));
   preTexts.add(letter);
   await write(text);
@@ -59,23 +78,30 @@ const startTypingTest = async () => {
   let cursor = 0;
   let typeCount = 0;
   let errorCount = 0;
-  let isMistake = false;
+  let status;
 
   const startTime = Date.now();
 
-  console.clear();
   write(gray(sentence));
+
   for await (const chunk of Deno.stdin.readable) {
     const decodedChunk = decode(chunk);
-    console.clear();
-    isMistake = false;
+    if (decodedChunk === "\x7f") {
+      if (preTexts.lenght() === 0) continue;
+      preTexts.backspace();
+      updateScreen(sentence, cursor - 1, "backspace");
+      cursor--;
+      continue;
+    }
+
+    status = "correct";
 
     if (sentence[cursor] !== decodedChunk) {
       errorCount++;
-      isMistake = true;
+      status = "mistake";
     }
 
-    await updateScreen(sentence, cursor, isMistake);
+    await updateScreen(sentence, cursor, status);
     cursor++;
 
     if (cursor >= sentence.length) {
@@ -87,7 +113,7 @@ const startTypingTest = async () => {
         errorCount,
       );
       displayResult(speedAndAccurecy);
-      return;
+      break;
     }
 
     typeCount++;
