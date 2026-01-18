@@ -19,7 +19,8 @@
 # phase one
 
 - make a function that take an object of question and options and give an output
-  object of question, answer and isCorrect. input => { question : 'what is the
-  capital of india', options : ['Delhi', 'Kolkata', 'Chennai', 'Mumbai'], answer
-  : 'Delhi' } outPut output => { question : string ,answer : string ,isCorrect :
-  boolean, }
+  object of question, answer and isCorrect. input => { - - - question : 'what is
+  the capital of india',
+  - options : ['Delhi', 'Kolkata', 'Chennai', 'Mumbai'], - - answer : 'Delhi' }
+  - outPut output => { question : string ,answer : string ,isCorrect : boolean,
+    }
