@@ -1,7 +1,7 @@
-import { startGame } from "./src/red_king.js";
+import { startGameServer } from "./src/red_king.js";
 
-const main = () => {
-  startGame();
+const main = async () => {
+  await startGameServer(8000);
 };
 
-main();
+await main();
