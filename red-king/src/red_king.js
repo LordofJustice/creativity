@@ -1,6 +1,8 @@
 import { cards } from "./cards.js";
+import { cardImages } from "./cards_image.js";
 import { shuffle } from "jsr:@std/random/shuffle";
 import { escSeqOfImage } from "./display_cards.js";
+
 const CARD_WIDTH_OFFSET = 12;
 const CARD_HEIGHT_OFFSET = 8;
 const PLAYERS_COUNT = 3;
@@ -13,6 +15,14 @@ const moveCursorTo = (x, y) => `\x1b[${y};${x}H`;
 const encode = (text) => new TextEncoder().encode(text);
 
 const decode = (arrBuffer) => new TextDecoder().decode(arrBuffer);
+
+const escSeqOfImage = (imageCode, cardId) => {
+  const card = cardImages[imageCode];
+  const cardImage = ESC + "_G" + `q=2,i=${cardId}` +
+    `,a=T,f=100;` + card +
+    ESC + "\\";
+  return cardImage;
+};
 
 const distributeCards = (distributeCard, players) => {
   for (const player of players) {
@@ -27,6 +37,20 @@ const writeOnConnection = async (conn, content) => {
   await conn.write(encode(content));
 };
 
+const delay = async (time) => {
+  await new Promise((resolve) => {
+    setTimeout(() => {
+      resolve(1);
+    }, time);
+  });
+};
+
+const drawCard = function* (cards) {
+  while (cards.length !== 0) {
+    yield cards.pop();
+  }
+};
+
 const displayCard = async (
   conn,
   imageCode,
@@ -38,6 +62,25 @@ const displayCard = async (
   const image = escSeqOfImage(toShow, id);
   await writeOnConnection(conn, moveCursorTo(x, y) + image);
   await delay(DELAY_BETWEEN_CARD_TRANSFER);
+};
+
+const broadcast = (players, message) => {
+  players.forEach(async ({ conn }) => {
+    await writeOnConnection(
+      conn,
+      message,
+    );
+  });
+};
+
+const takeInput = async (conn, message) => {
+  const buff = new Uint8Array(10);
+  writeOnConnection(conn, message);
+  const count = await conn.read(buff);
+  const rawData = buff.slice(0, count);
+
+  const data = decode(rawData).trim();
+  return data;
 };
 
 const displayCards = async (
@@ -68,6 +111,7 @@ const displayCards = async (
   const otherPlayers = players.filter((each) => each !== currentPlayer);
 
   let pad = "\n\n\n\n";
+
   for (const player of otherPlayers) {
     cardPos.y += CARD_HEIGHT_OFFSET;
     cardPos.x = 0;
@@ -89,25 +133,6 @@ const displayCards = async (
   }
 };
 
-const drawCard = function* (cards) {
-  while (cards.length !== 0) {
-    yield cards.pop();
-  }
-};
-
-const dbg = (massage, x) => {
-  console.log({ [massage]: x });
-  return x;
-};
-
-const delay = async (time) => {
-  await new Promise((resolve) => {
-    setTimeout(() => {
-      resolve(1);
-    }, time);
-  });
-};
-
 export const startGameServer = async (port, hostname) => {
   const server = Deno.listen({
     hostname,
@@ -118,8 +143,9 @@ export const startGameServer = async (port, hostname) => {
   const cardDistributor = drawCard(shuffledCards);
   const players = [];
   let i = 523123;
+
+  // before starting of game
   for await (const conn of server) {
-    // writeOnConnection(conn, `Hello player [${i - 1}] \nEnter Your Name : `);
     const player = { conn, cards: [] };
     const name = await takeInput(
       conn,
@@ -139,7 +165,7 @@ export const startGameServer = async (port, hostname) => {
       break;
     }
   }
-
+  // game started
   distributeCards(cardDistributor, players);
 
   const mostPrioritizedOne = null;
@@ -155,9 +181,6 @@ export const startGameServer = async (port, hostname) => {
       break;
     }
 
-    // const player = Math.floor(Math.random() * players.length);
-
-    // players[player].cards.pop();
     const player = players[chance];
 
     broadcast(
@@ -175,24 +198,4 @@ export const startGameServer = async (port, hostname) => {
       chance = (chance + 1) % players.length;
     }
   }
-};
-
-const broadcast = (players, message) => {
-  players.forEach(async ({ conn }) => {
-    await writeOnConnection(
-      conn,
-      message,
-    );
-  });
-};
-// 10.132.124.208
-
-const takeInput = async (conn, message) => {
-  const buff = new Uint8Array(10);
-  writeOnConnection(conn, message);
-  const count = await conn.read(buff);
-  const rawData = buff.slice(0, count);
-
-  const data = decode(rawData).trim();
-  return data;
 };

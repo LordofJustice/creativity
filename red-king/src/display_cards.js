@@ -3,11 +3,10 @@ import { cards } from "./cards.js";
 import { shuffle } from "jsr:@std/random/shuffle";
 // import { process } from "node:process";
 
-const ESC = "\x1b";
-
 const encode = (text) => new TextEncoder().encode(text);
 
 export const escSeqOfImage = (imageCode, cardId) => {
+  const ESC = "\x1b";
   const card = cardImages[imageCode];
   const cardImage = ESC + "_G" + `q=2,i=${cardId}` +
     `,a=T,f=100;` + card +
