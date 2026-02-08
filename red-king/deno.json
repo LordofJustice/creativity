@@ -3,6 +3,9 @@
     "dev": "deno run -A main.js"
   },
   "imports": {
-    "@std/assert": "jsr:@std/assert@1"
+    "@std/assert": "jsr:@std/assert@1",
+    "cli-table3": "npm:cli-table3@^0.6.5",
+    "columnify": "npm:columnify@^1.6.0",
+    "columns": "npm:columns@^0.8.0"
   }
 }

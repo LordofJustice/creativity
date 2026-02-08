@@ -1,14 +1,14 @@
-import { cards } from "./cards.js";
+import { cards } from "../card_removal_game/card_removal_game.js";
 import { shuffle } from "jsr:@std/random/shuffle";
-import { cardImages } from "./cards_image.js";
+import { cardImages } from "../card_removal_game/card_removal_game.js";
 
 const CARD_WIDTH_OFFSET = 12;
 const CARD_HEIGHT_OFFSET = 8;
-const PLAYERS_COUNT = 2;
+const PLAYERS_COUNT = 4;
 const CARDS_TO_DISTRIBUTE = 5;
-const DELAY_BETWEEN_CARD_TRANSFER = 5;
+const DELAY_BETWEEN_CARD_TRANSFER = 15;
 const SCREEN_CLEAR = "\x1b[2J\x1b[H";
-const BACK_CARD = "BACK_BLUE";
+const BACK_CARD = "BACK_GOLD";
 
 const moveCursorTo = (x, y) => `\x1b[${y};${x}H`;
 
@@ -145,7 +145,6 @@ const preGameSetup = async (server, players) => {
 
     player.id = id++;
     player.name = name;
-    console.log("inside pre game setup");
 
     players.push(player);
 
@@ -163,6 +162,13 @@ const preGameSetup = async (server, players) => {
 
 const didWin = (player) => player.cards.every((card) => card === null);
 
+const isLocked = (playerInput) => playerInput.trim().toUpperCase() === "LOCK";
+
+const isValidInput = (playerInput, currentPlayer) =>
+  /^\d+$/.test(playerInput) && (+playerInput > 0 &&
+    +playerInput <= CARDS_TO_DISTRIBUTE) &&
+  !currentPlayer.cards[+playerInput - 1] !== null;
+
 const calculateScore = (cards) => {
   return cards.reduce((acc, card) => {
     const cardValue = card === null ? 0 : card.value;
@@ -177,7 +183,9 @@ const playersRanking = (players) =>
     score: calculateScore(cards),
   })).sort((a, b) => a - b);
 
-const handleWinningCondition = (chance, players, isLocked, lockedPlayerId) => {
+const handleWinningCondition = (
+  { chance, players, wasLocked, lockedPlayerId },
+) => {
   const previousPlayer =
     players[(chance + players.length - 1) % players.length];
 
@@ -189,7 +197,7 @@ const handleWinningCondition = (chance, players, isLocked, lockedPlayerId) => {
     return true;
   }
   const currentPlayer = players[chance];
-  if (isLocked && lockedPlayerId === currentPlayer.id) {
+  if (wasLocked && lockedPlayerId === currentPlayer.id) {
     const scoreBoard = playersRanking(players);
     const wonPlayer = scoreBoard[0];
     broadcast(
@@ -216,49 +224,57 @@ export const startCardRemovalGameServer = async (port, hostname) => {
 
   distributeCards(cardDistributor, players);
 
-  let chance = 0;
-  let isLocked = false;
   let lockedPlayerId;
+  const gameDetails = {
+    players,
+    chance: 0,
+    wasLocked: false,
+    lockedPlayerId,
+  };
+
   while (true) {
     for (const player of players) {
       await displayCards(player, players);
     }
 
-    const didWon = handleWinningCondition(
-      chance,
-      players,
-      isLocked,
-      lockedPlayerId,
-    );
-    if (didWon) break;
-    const currentPlayer = players[chance];
+    const didWon = handleWinningCondition(gameDetails);
 
+    if (didWon) break;
+
+    gameDetails.currentPlayer = players[gameDetails.chance];
+    const { currentPlayer } = gameDetails;
     broadcast(
       players,
       ` \n\n Now player ${currentPlayer.name} [${currentPlayer.id}] will Play!\n`,
     );
 
-    const playerInput = await takeInput(
-      currentPlayer.conn,
-      `\n\nPlayer ${currentPlayer.name} [${currentPlayer.id}] It's Your Turn :`,
+    const inputMessage =
+      `\n\nPlayer ${currentPlayer.name} [${currentPlayer.id}] It's Your Turn :`;
+
+    const playerInput = await takeInput(currentPlayer.conn, inputMessage);
+
+    const { wasLocked, lockedPlayerId, chance } = handleUserInput(
+      gameDetails,
+      playerInput,
     );
-
-    if (!isLocked && playerInput.trim().toUpperCase() === "LOCK") {
-      isLocked = true;
-      lockedPlayerId = currentPlayer.id;
-      chance = (chance + 1) % players.length;
-    }
-
-    if (
-      /^\d+$/.test(playerInput) && +playerInput > 0 &&
-      +playerInput <= currentPlayer.cards.length
-    ) {
-      currentPlayer.cards[+playerInput - 1] = null;
-      console.log({
-        cardNumberChoose: (+playerInput - 1),
-        player: currentPlayer,
-      });
-      chance = (chance + 1) % players.length;
-    }
+    gameDetails.wasLocked = wasLocked;
+    gameDetails.lockedPlayerId = lockedPlayerId;
+    gameDetails.chance = chance;
   }
+};
+
+const handleUserInput = (
+  { wasLocked, currentPlayer, chance, players, lockedPlayerId },
+  playerInput,
+) => {
+  if (!wasLocked && isLocked(playerInput)) {
+    wasLocked = true;
+    lockedPlayerId = currentPlayer.id;
+    chance = (chance + 1) % players.length;
+  } else if (isValidInput(playerInput, currentPlayer)) {
+    currentPlayer.cards[+playerInput - 1] = null;
+    chance = (chance + 1) % players.length;
+  }
+
+  return { wasLocked, lockedPlayerId, chance };
 };

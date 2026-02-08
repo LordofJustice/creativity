@@ -1,28 +1,15 @@
 import { cards } from "./cards.js";
-import { cardImages } from "./cards_image.js";
 import { shuffle } from "jsr:@std/random/shuffle";
-import { escSeqOfImage } from "./display_cards.js";
+import {
+  displayCard,
+  displayCards,
+  formateScoreBoard,
+} from "./display_cards.js";
+import { broadcast, takeInput, writeOnConnection } from "./red_king_lib.js";
 
-const CARD_WIDTH_OFFSET = 12;
-const CARD_HEIGHT_OFFSET = 8;
-const PLAYERS_COUNT = 3;
-const CARDS_TO_DISTRIBUTE = 10;
-const DELAY_BETWEEN_CARD_TRANSFER = 5;
-const SCREEN_CLEAR = "\x1b[2J\x1b[H";
-
-const moveCursorTo = (x, y) => `\x1b[${y};${x}H`;
-
-const encode = (text) => new TextEncoder().encode(text);
-
-const decode = (arrBuffer) => new TextDecoder().decode(arrBuffer);
-
-const escSeqOfImage = (imageCode, cardId) => {
-  const card = cardImages[imageCode];
-  const cardImage = ESC + "_G" + `q=2,i=${cardId}` +
-    `,a=T,f=100;` + card +
-    ESC + "\\";
-  return cardImage;
-};
+const PLAYERS_COUNT = 2;
+const CARDS_TO_DISTRIBUTE = 4;
+const START_ID = 45304;
 
 const distributeCards = (distributeCard, players) => {
   for (const player of players) {
@@ -33,169 +20,224 @@ const distributeCards = (distributeCard, players) => {
   return players;
 };
 
-const writeOnConnection = async (conn, content) => {
-  await conn.write(encode(content));
-};
-
-const delay = async (time) => {
-  await new Promise((resolve) => {
-    setTimeout(() => {
-      resolve(1);
-    }, time);
-  });
-};
-
 const drawCard = function* (cards) {
   while (cards.length !== 0) {
     yield cards.pop();
   }
 };
 
-const displayCard = async (
-  conn,
-  imageCode,
-  id,
-  { x, y },
-  toShowFace = false,
-) => {
-  const toShow = toShowFace ? imageCode.trim().toUpperCase() : "BACK";
-  const image = escSeqOfImage(toShow, id);
-  await writeOnConnection(conn, moveCursorTo(x, y) + image);
-  await delay(DELAY_BETWEEN_CARD_TRANSFER);
-};
-
-const broadcast = (players, message) => {
-  players.forEach(async ({ conn }) => {
-    await writeOnConnection(
-      conn,
-      message,
-    );
-  });
-};
-
-const takeInput = async (conn, message) => {
-  const buff = new Uint8Array(10);
-  writeOnConnection(conn, message);
-  const count = await conn.read(buff);
-  const rawData = buff.slice(0, count);
-
-  const data = decode(rawData).trim();
-  return data;
-};
-
-const displayCards = async (
-  currentPlayer,
-  players,
-  showEveryOneCards = false,
-) => {
-  await writeOnConnection(currentPlayer.conn, SCREEN_CLEAR);
-  const cardPos = { x: 0, y: 2 };
-  const toShow = true;
-  writeOnConnection(
-    currentPlayer.conn,
-    `Hello Player : ${currentPlayer.name} ${currentPlayer.id}`,
-  );
-  for (const card of currentPlayer.cards) {
-    await displayCard(
-      currentPlayer.conn,
-      card.imageCode,
-      card.id,
-      cardPos,
-      toShow,
-    );
-    cardPos.x += CARD_WIDTH_OFFSET;
-  }
-
-  cardPos.y += 2;
-
-  const otherPlayers = players.filter((each) => each !== currentPlayer);
-
-  let pad = "\n\n\n\n";
-
-  for (const player of otherPlayers) {
-    cardPos.y += CARD_HEIGHT_OFFSET;
-    cardPos.x = 0;
-    writeOnConnection(
-      currentPlayer.conn,
-      `${pad}Player : ${player.name} [${player.id}]`,
-    );
-    pad = "\n";
-    for (const card of player.cards) {
-      await displayCard(
-        currentPlayer.conn,
-        card.imageCode,
-        card.id,
-        cardPos,
-        showEveryOneCards,
-      );
-      cardPos.x += CARD_WIDTH_OFFSET;
-    }
-  }
-};
-
-export const startGameServer = async (port, hostname) => {
-  const server = Deno.listen({
-    hostname,
-    port,
-    transport: "tcp",
-  });
-  const shuffledCards = shuffle(cards);
-  const cardDistributor = drawCard(shuffledCards);
+const preGameSetup = async (server) => {
+  let id = START_ID;
   const players = [];
-  let i = 523123;
-
-  // before starting of game
   for await (const conn of server) {
     const player = { conn, cards: [] };
     const name = await takeInput(
       conn,
-      `\n\n\nEnter Your Name [player Id : ${i}] :`,
+      `\n\n\nEnter Your Name [player Id : ${id}] :`,
     );
 
-    player.id = i++;
+    player.id = id++;
     player.name = name;
 
     players.push(player);
 
     broadcast(
       players,
-      `\n\nWaiting for players....\nConnected : ${players.length}`,
+      `\n\nWaiting for players....\nConnected : ${players.length}\nRemaining : ${
+        PLAYERS_COUNT - players.length
+      }`,
     );
     if (players.length === PLAYERS_COUNT) {
       break;
     }
   }
-  // game started
+  return players;
+};
+
+const calculateScore = (cards) => {
+  return cards.reduce((acc, card) => {
+    const cardValue = card === null ? 0 : card.value;
+    return acc + cardValue;
+  }, 0);
+};
+
+const didWin = (player) => player.cards.every((card) => card === null);
+
+const playersRanking = (players) =>
+  players.map(({ name, cards, id }) => ({
+    id,
+    name,
+    score: calculateScore(cards),
+  })).sort((a, b) => a - b);
+
+const handleWinningCondition = (
+  { chance, players, wasLocked, lockedPlayerId },
+) => {
+  const previousPlayer =
+    players[(chance + players.length - 1) % players.length];
+
+  const currentPlayer = players[chance];
+  if (
+    didWin(previousPlayer) || wasLocked && lockedPlayerId === currentPlayer.id
+  ) {
+    const scoreBoard = playersRanking(players);
+    console.table(scoreBoard);
+    console.log({ scoreBoard });
+    const wonPlayer = scoreBoard[0];
+    const formattedScoreBoard = formateScoreBoard(scoreBoard);
+    console.log({ formattedScoreBoard });
+    const winningMessage =
+      `\n\n?********   Player ${wonPlayer.name} [${wonPlayer.id}] Has Won!  *******\n${formattedScoreBoard}\n`;
+    broadcast(players, winningMessage);
+    return true;
+  }
+  return false;
+};
+
+const isValidInput = (playerInput, player) =>
+  /^\d+$/.test(playerInput) && (+playerInput > 0 &&
+    +playerInput <= CARDS_TO_DISTRIBUTE) &&
+  !player.cards[+playerInput - 1] !== null;
+
+const parseCommand = (playerCommand, player) => {
+  const [command, arg] = playerCommand.trim().toUpperCase().split(/\s+/g);
+  if (command === "S" && isValidInput(arg, player)) {
+    return { succeed: true, command: "SWAP", arg: +arg };
+  } else if (command === "D") {
+    return { succeed: true, command: "DISCARD" };
+  }
+  return { succeed: false, error: "invalid command" };
+};
+
+const handleInputForDrawCard = async (currentPlayer) => {
+  const playerCommand = await takeInput(
+    currentPlayer.conn,
+    "\n\ndiscard[d] or swap[s] <card number> : ",
+  );
+  const { succeed, command, arg } = parseCommand(playerCommand, currentPlayer);
+  if (!succeed) {
+    await writeOnConnection(currentPlayer.conn, "INVALID COMMAND OR ARGUMENT");
+    return handleInputForDrawCard(currentPlayer);
+  }
+  return { command, arg };
+};
+
+const handleDrawCondition = async (
+  currentPlayer,
+  cardDistributor,
+  discardedCard,
+) => {
+  let discarded = discardedCard;
+  const drawnCard = cardDistributor.next().value;
+  displayCard(currentPlayer.conn, drawnCard.imageCode, drawnCard.id, {
+    x: 48,
+    y: 0,
+  }, true);
+  const { command, arg } = await handleInputForDrawCard(currentPlayer);
+  if (command === "DISCARD") {
+    discarded = drawnCard;
+  } else if (command === "SWAP") {
+    discarded = currentPlayer.cards[arg - 1];
+    currentPlayer.cards[arg - 1] = drawnCard;
+  }
+  return discarded;
+};
+
+const isLockCommand = (playerInput) => playerInput.trim().toUpperCase() === "L";
+
+const isDrawCommand = (playerInput) => playerInput.trim().toUpperCase() === "D";
+
+const handleUserInput = async (
+  {
+    wasLocked,
+    currentPlayer,
+    chance,
+    players,
+    lockedPlayerId,
+    cardDistributor,
+    discardedCard,
+  },
+) => {
+  const inputMessage =
+    `\n\nPlayer ${currentPlayer.name} [${currentPlayer.id}] It's Your Turn :
+      choose draw or lock :`;
+
+  const playerInput = await takeInput(currentPlayer.conn, inputMessage);
+
+  if (isDrawCommand(playerInput)) {
+    discardedCard = await handleDrawCondition(
+      currentPlayer,
+      cardDistributor,
+      discardedCard,
+    );
+    chance = (chance + 1) % players.length;
+  } else if (!wasLocked && isLockCommand(playerInput)) {
+    wasLocked = true;
+    lockedPlayerId = currentPlayer.id;
+    chance = (chance + 1) % players.length;
+  } else {
+    return handleUserInput({
+      wasLocked,
+      currentPlayer,
+      chance,
+      players,
+      lockedPlayerId,
+      cardDistributor,
+      discardedCard,
+    });
+  }
+  return { wasLocked, lockedPlayerId, chance, discardedCard };
+};
+
+const startGame = async (players) => {
+  const shuffledCards = shuffle(cards);
+  const cardDistributor = drawCard(shuffledCards);
   distributeCards(cardDistributor, players);
 
-  const mostPrioritizedOne = null;
-  let chance = 0;
+  let lockedPlayerId;
+  let discardedCard;
+  const gameDetails = {
+    players,
+    chance: 0,
+    wasLocked: false,
+    lockedPlayerId,
+    cardDistributor,
+    discardedCard,
+  };
+
   while (true) {
     for (const player of players) {
-      await displayCards(player, players, player === mostPrioritizedOne);
+      await displayCards(player, players);
     }
 
-    const won = players.find((each) => each.cards.length === 0);
-    if (won) {
-      broadcast(players, `\n\n?********   Player ${won.id} Has Won!  *******`);
-      break;
-    }
+    const didWon = handleWinningCondition(gameDetails);
 
-    const player = players[chance];
+    if (didWon) break;
 
+    gameDetails.currentPlayer = players[gameDetails.chance];
     broadcast(
       players,
-      ` \n\n Now player ${player.name} [${player.id}] will Play!\n`,
+      ` \n\n Now player ${gameDetails.currentPlayer.name} [${gameDetails.currentPlayer.id}] will Play!\n`,
     );
 
-    const data = await takeInput(
-      player.conn,
-      `\n\nPlayer ${player.name} [${player.id}] It's Your Turn :`,
-    );
-
-    if (/^\d+$/.test(data) && +data > 0 && +data <= player.cards.length) {
-      player.cards.splice((+data) - 1, 1);
-      chance = (chance + 1) % players.length;
-    }
+    const { wasLocked, lockedPlayerId, chance, discardedCard } =
+      await handleUserInput(
+        gameDetails,
+      );
+    gameDetails.wasLocked = wasLocked;
+    gameDetails.lockedPlayerId = lockedPlayerId;
+    gameDetails.chance = chance;
+    gameDetails.discardedCard = discardedCard;
   }
+};
+
+export const startRedKingServer = async (port, hostname) => {
+  const server = Deno.listen({
+    hostname,
+    port,
+    transport: "tcp",
+  });
+
+  const players = await preGameSetup(server);
+  await startGame(players);
 };
