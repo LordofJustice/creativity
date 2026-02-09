@@ -120,10 +120,14 @@ const handleDrawCondition = async (
 ) => {
   let discarded = discardedCard;
   const drawnCard = cardDistributor.next().value;
-  displayCard(currentPlayer.conn, drawnCard.imageCode, drawnCard.id, {
-    x: 48,
-    y: 2,
-  }, true);
+  displayCard(
+    currentPlayer.conn,
+    drawnCard.imageCode,
+    drawnCard.id,
+    { x: 0, y: 0 },
+    true,
+    false,
+  );
   const { command, arg } = await handleInputForDrawCard(currentPlayer);
   if (command === "DISCARD") {
     discarded = drawnCard;

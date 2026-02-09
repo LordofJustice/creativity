@@ -42,12 +42,12 @@ export const displayCard = async (
   id,
   { x, y },
   toShowFace = false,
-  toMove = false
+  toMove = true,
 ) => {
   const toShow = toShowFace ? imageCode.trim().toUpperCase() : BACK_CARD;
   const image = escSeqOfImage(toShow, id);
-  const move = toMove ? 
-  await writeOnConnection(conn, moveCursorTo(x, y) + image + "\n");
+  const move = toMove ? moveCursorTo(x, y) : "/n";
+  await writeOnConnection(conn, move + image + "\n");
   await delay(DELAY_BETWEEN_CARD_TRANSFER);
 };
 
