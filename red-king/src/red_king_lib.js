@@ -63,7 +63,7 @@ const playersRanking = (players) =>
     id,
     name,
     score: calculateScore(cards),
-  })).sort((a, b) => b - a);
+  })).sort((a, b) => a.score - b.score);
 
 export const broadcastWinningMessage = (players) => {
   const scoreBoard = playersRanking(players);

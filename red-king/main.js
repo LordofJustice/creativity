@@ -1,4 +1,3 @@
-// import { startCardRemovalGameServer } from "./src/card_removal_game.js";
 import { startRedKingServer } from "./src/red_king.js";
 
 const main = async () => {

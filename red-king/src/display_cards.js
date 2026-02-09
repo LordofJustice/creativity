@@ -25,29 +25,20 @@ export const displayCard = async (
   id,
   { x, y },
   toShowFace = false,
-  toMove = true,
+  moveCursor = true,
 ) => {
   const toShow = toShowFace ? imageCode.trim().toUpperCase() : BACK_CARD;
   const image = escSeqOfImage(toShow, id);
-  const move = toMove ? moveCursorTo(x, y) : "";
+  const move = moveCursor ? moveCursorTo(x, y) : "";
   await writeOnConnection(conn, move + image + "\n");
   await delay(DELAY_BETWEEN_CARD_TRANSFER);
 };
 
-export const displayCards = async (currentPlayer, players, discardedCard) => {
-  await writeOnConnection(currentPlayer.conn, SCREEN_CLEAR);
-  const cardPos = { x: 0, y: 2 };
-  const showFace = false;
-
-  await writeOnConnection(
-    currentPlayer.conn,
-    `Hello Player : ${currentPlayer.name} [${currentPlayer.id}]`,
-  );
-
-  for (const card of currentPlayer.cards) {
+const showPlayerCards = async (conn, cards, cardPos, showFace = false) => {
+  for (const card of cards) {
     if (card !== null) {
       await displayCard(
-        currentPlayer.conn,
+        conn,
         card.imageCode,
         card.id,
         cardPos,
@@ -56,44 +47,48 @@ export const displayCards = async (currentPlayer, players, discardedCard) => {
     }
     cardPos.x += CARD_WIDTH_OFFSET;
   }
+  cardPos.x = 1;
+};
 
-  cardPos.y += 2;
+const displayDiscardedCard = async (conn, discardedCard, cardPos) => {
+  cardPos.y += CARD_HEIGHT_OFFSET;
+  await writeOnConnection(conn, "DISCARDED CARD");
+  await displayCard(
+    conn,
+    discardedCard.imageCode,
+    discardedCard.id,
+    cardPos,
+    true,
+  );
+  await writeOnConnection(
+    conn,
+    moveCursorTo(0, cardPos.y + CARD_HEIGHT_OFFSET),
+  );
+};
 
-  const otherPlayers = players.filter((each) => each !== currentPlayer);
-
-  let pad = "\n\n";
+const showOtherPlayerCards = async (otherPlayers, cardPos, currentPlayer) => {
   for (const player of otherPlayers) {
     cardPos.y += CARD_HEIGHT_OFFSET;
-    cardPos.x = 0;
 
     await writeOnConnection(
       currentPlayer.conn,
-      `${pad}Player : ${player.name} [${player.id}]`,
+      `Player : ${player.name} [${player.id}]`,
     );
-    pad = "\n";
-    for (const card of player.cards) {
-      if (card !== null) {
-        await displayCard(
-          currentPlayer.conn,
-          card.imageCode,
-          card.id,
-          cardPos,
-        );
-      }
-      cardPos.x += CARD_WIDTH_OFFSET;
-    }
-    cardPos.x = 0;
-    cardPos.y += CARD_HEIGHT_OFFSET;
-    await displayCard(
-      currentPlayer.conn,
-      discardedCard.imageCode,
-      discardedCard.id,
-      cardPos,
-      true,
-    );
-    await writeOnConnection(
-      currentPlayer.conn,
-      moveCursorTo(0, cardPos.y + CARD_HEIGHT_OFFSET),
-    );
+    await showPlayerCards(currentPlayer.conn, player.cards, cardPos, false);
   }
+};
+
+export const displayCards = async (currentPlayer, players, discardedCard) => {
+  await writeOnConnection(currentPlayer.conn, SCREEN_CLEAR);
+  const cardPos = { x: 1, y: 2 }; //terminal grid starts from 1,1
+
+  await writeOnConnection(
+    currentPlayer.conn,
+    `Hello Player : ${currentPlayer.name} [${currentPlayer.id}]`,
+  );
+  await showPlayerCards(currentPlayer.conn, currentPlayer.cards, cardPos);
+
+  const otherPlayers = players.filter((player) => player !== currentPlayer);
+  await showOtherPlayerCards(otherPlayers, cardPos, currentPlayer);
+  await displayDiscardedCard(currentPlayer.conn, discardedCard, cardPos);
 };

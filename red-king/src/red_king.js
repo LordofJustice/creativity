@@ -42,14 +42,13 @@ const preGameSetup = async (server) => {
     player.name = name;
 
     players.push(player);
+    if (players.length === PLAYERS_COUNT) break;
+
     const message =
       `\n\nWaiting for players....\nConnected : ${players.length}\nRemaining : ${
         PLAYERS_COUNT - players.length
       }`;
-    broadcast(players, message);
-    if (players.length === PLAYERS_COUNT) {
-      break;
-    }
+    await broadcast(players, message);
   }
   return players;
 };
@@ -92,11 +91,9 @@ const handleInputForDrawCard = async (currentPlayer) => {
   return { command, arg };
 };
 
-const handleDrawCondition = async (
-  { currentPlayer, cardDistributor, discardedCard },
-) => {
-  let discarded = discardedCard;
-  const drawnCard = cardDistributor.next().value;
+const handleDrawCondition = async (gameDetails) => {
+  const { currentPlayer } = gameDetails;
+  const drawnCard = gameDetails.cardDistributor.next().value;
   displayCard(
     currentPlayer.conn,
     drawnCard.imageCode,
@@ -109,12 +106,19 @@ const handleDrawCondition = async (
   const { command, arg } = await handleInputForDrawCard(currentPlayer);
 
   if (command === "DISCARD") {
-    discarded = drawnCard;
+    gameDetails.discardedCard = drawnCard;
   } else if (command === "SWAP") {
-    discarded = currentPlayer.cards[arg - 1];
+    gameDetails.discardedCard = currentPlayer.cards[arg - 1];
     currentPlayer.cards[arg - 1] = drawnCard;
   }
-  return discarded;
+  gameDetails.chance = (gameDetails.chance + 1) % gameDetails.players.length;
+};
+
+const handleLockCondition = (gameDetails) => {
+  gameDetails.wasLocked = true;
+  gameDetails.lockedPlayerId = gameDetails.currentPlayer.id;
+  gameDetails.chance = (gameDetails.chance + 1) % gameDetails.players.length;
+  return;
 };
 
 const isLockCommand = (playerInput) => playerInput.trim().toUpperCase() === "L";
@@ -124,7 +128,7 @@ const isDrawCommand = (playerInput) => playerInput.trim().toUpperCase() === "D";
 const handleUserInput = async (gameDetails) => {
   const inputMessage =
     `\n\nPlayer ${gameDetails.currentPlayer.name} [${gameDetails.currentPlayer.id}] It's Your Turn :
-      choose draw or lock :`;
+      choose [d] for draw or [l] for lock :`;
 
   const playerInput = await takeInput(
     gameDetails.currentPlayer.conn,
@@ -132,18 +136,18 @@ const handleUserInput = async (gameDetails) => {
   );
 
   if (isDrawCommand(playerInput)) {
-    gameDetails.discardedCard = await handleDrawCondition(gameDetails);
-    gameDetails.chance = (gameDetails.chance + 1) % gameDetails.players.length;
-  } else if (!gameDetails.wasLocked && isLockCommand(playerInput)) {
-    gameDetails.wasLocked = true;
-    gameDetails.lockedPlayerId = gameDetails.currentPlayer.id;
-    gameDetails.chance = (gameDetails.chance + 1) % gameDetails.players.length;
-  } else {
-    handleUserInput(gameDetails);
+    await handleDrawCondition(gameDetails);
+    return;
   }
+  if (!gameDetails.wasLocked && isLockCommand(playerInput)) {
+    handleLockCondition(gameDetails);
+    return;
+  }
+  await handleUserInput(gameDetails);
+  return;
 };
 
-const initializeGame = async (gameDetails) => {
+const startGame = async (gameDetails) => {
   while (true) {
     for (const player of gameDetails.players) {
       await displayCards(
@@ -154,35 +158,36 @@ const initializeGame = async (gameDetails) => {
     }
 
     if (didWin(gameDetails)) {
-      broadcastWinningMessage(gameDetails.players);
+      await broadcastWinningMessage(gameDetails.players);
       break;
     }
 
     gameDetails.currentPlayer = gameDetails.players[gameDetails.chance];
-    broadcast(
-      gameDetails.players,
-      ` \n\n Now player ${gameDetails.currentPlayer.name} [${gameDetails.currentPlayer.id}] will Play!\n`,
-    );
+    const playChanceMessage =
+      `\n Now player ${gameDetails.currentPlayer.name} [${gameDetails.currentPlayer.id}] will Play!\n`;
+    await broadcast(gameDetails.players, playChanceMessage);
 
     await handleUserInput(gameDetails);
   }
 };
 
-const startGame = async (players) => {
+const initGameDetails = (players, cardDistributor) => ({
+  players,
+  chance: 0,
+  wasLocked: false,
+  lockedPlayerId: undefined,
+  cardDistributor,
+  discardedCard: { id: 1000, imageCode: "BACK_BLUE" },
+});
+
+const initializeGame = async (players) => {
   const shuffledCards = shuffle(cards);
   const cardDistributor = drawCard(shuffledCards);
   distributeCards(cardDistributor, players);
 
-  const gameDetails = {
-    players,
-    chance: 0,
-    wasLocked: false,
-    lockedPlayerId: undefined,
-    cardDistributor,
-    discardedCard: { id: 1000, imageCode: "BACK_BLUE" },
-  };
+  const gameDetails = initGameDetails(players, cardDistributor);
 
-  await initializeGame(gameDetails);
+  await startGame(gameDetails);
 };
 
 export const startRedKingServer = async (port, hostname) => {
@@ -193,5 +198,5 @@ export const startRedKingServer = async (port, hostname) => {
   });
 
   const players = await preGameSetup(server);
-  await startGame(players);
+  await initializeGame(players);
 };
