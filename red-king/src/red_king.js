@@ -61,7 +61,7 @@ const calculateScore = (cards) => {
   }, 0);
 };
 
-const didWin = (player) => player.cards.every((card) => card === null);
+const areAllCardsNull = (player) => player.cards.every((card) => card === null);
 
 const playersRanking = (players) =>
   players.map(({ name, cards, id }) => ({
@@ -70,28 +70,21 @@ const playersRanking = (players) =>
     score: calculateScore(cards),
   })).sort((a, b) => a - b);
 
-const handleWinningCondition = (
-  { chance, players, wasLocked, lockedPlayerId },
-) => {
+const didWin = ({ chance, players, wasLocked, lockedPlayerId }) => {
   const previousPlayer =
     players[(chance + players.length - 1) % players.length];
-
   const currentPlayer = players[chance];
-  if (
-    didWin(previousPlayer) || wasLocked && lockedPlayerId === currentPlayer.id
-  ) {
-    const scoreBoard = playersRanking(players);
-    console.table(scoreBoard);
-    console.log({ scoreBoard });
-    const wonPlayer = scoreBoard[0];
-    const formattedScoreBoard = formateScoreBoard(scoreBoard);
-    console.log({ formattedScoreBoard });
-    const winningMessage =
-      `\n\n?********   Player ${wonPlayer.name} [${wonPlayer.id}] Has Won!  *******\n${formattedScoreBoard}\n`;
-    broadcast(players, winningMessage);
-    return true;
-  }
-  return false;
+  return areAllCardsNull(previousPlayer) ||
+    wasLocked && lockedPlayerId === currentPlayer.id;
+};
+
+const broadcastWinningMessage = (players) => {
+  const scoreBoard = playersRanking(players); //players
+  const wonPlayer = scoreBoard[0];
+  const formattedScoreBoard = formateScoreBoard(scoreBoard);
+  const winningMessage =
+    `\n\n?********   Player ${wonPlayer.name} [${wonPlayer.id}] Has Won!  *******\n${formattedScoreBoard}\n`;
+  broadcast(players, winningMessage);
 };
 
 const isValidInput = (playerInput, player) =>
@@ -123,15 +116,13 @@ const handleInputForDrawCard = async (currentPlayer) => {
 };
 
 const handleDrawCondition = async (
-  currentPlayer,
-  cardDistributor,
-  discardedCard,
+  { currentPlayer, cardDistributor, discardedCard },
 ) => {
   let discarded = discardedCard;
   const drawnCard = cardDistributor.next().value;
   displayCard(currentPlayer.conn, drawnCard.imageCode, drawnCard.id, {
     x: 48,
-    y: 0,
+    y: 2,
   }, true);
   const { command, arg } = await handleInputForDrawCard(currentPlayer);
   if (command === "DISCARD") {
@@ -147,46 +138,26 @@ const isLockCommand = (playerInput) => playerInput.trim().toUpperCase() === "L";
 
 const isDrawCommand = (playerInput) => playerInput.trim().toUpperCase() === "D";
 
-const handleUserInput = async (
-  {
-    wasLocked,
-    currentPlayer,
-    chance,
-    players,
-    lockedPlayerId,
-    cardDistributor,
-    discardedCard,
-  },
-) => {
+const handleUserInput = async (gameDetails) => {
   const inputMessage =
-    `\n\nPlayer ${currentPlayer.name} [${currentPlayer.id}] It's Your Turn :
+    `\n\nPlayer ${gameDetails.currentPlayer.name} [${gameDetails.currentPlayer.id}] It's Your Turn :
       choose draw or lock :`;
 
-  const playerInput = await takeInput(currentPlayer.conn, inputMessage);
+  const playerInput = await takeInput(
+    gameDetails.currentPlayer.conn,
+    inputMessage,
+  );
 
   if (isDrawCommand(playerInput)) {
-    discardedCard = await handleDrawCondition(
-      currentPlayer,
-      cardDistributor,
-      discardedCard,
-    );
-    chance = (chance + 1) % players.length;
-  } else if (!wasLocked && isLockCommand(playerInput)) {
-    wasLocked = true;
-    lockedPlayerId = currentPlayer.id;
-    chance = (chance + 1) % players.length;
+    gameDetails.discardedCard = await handleDrawCondition(gameDetails);
+    gameDetails.chance = (gameDetails.chance + 1) % gameDetails.players.length;
+  } else if (!gameDetails.wasLocked && isLockCommand(playerInput)) {
+    gameDetails.wasLocked = true;
+    gameDetails.lockedPlayerId = gameDetails.currentPlayer.id;
+    gameDetails.chance = (gameDetails.chance + 1) % gameDetails.players.length;
   } else {
-    return handleUserInput({
-      wasLocked,
-      currentPlayer,
-      chance,
-      players,
-      lockedPlayerId,
-      cardDistributor,
-      discardedCard,
-    });
+    handleUserInput(gameDetails);
   }
-  return { wasLocked, lockedPlayerId, chance, discardedCard };
 };
 
 const startGame = async (players) => {
@@ -194,25 +165,24 @@ const startGame = async (players) => {
   const cardDistributor = drawCard(shuffledCards);
   distributeCards(cardDistributor, players);
 
-  let lockedPlayerId;
-  let discardedCard;
   const gameDetails = {
     players,
     chance: 0,
     wasLocked: false,
-    lockedPlayerId,
+    lockedPlayerId: undefined,
     cardDistributor,
-    discardedCard,
+    discardedCard: { id: 1000, imageCode: "BACK_BLUE" },
   };
 
   while (true) {
-    for (const player of players) {
-      await displayCards(player, players);
+    for (const player of gameDetails.players) {
+      await displayCards(player, players, gameDetails.discardedCard);
     }
 
-    const didWon = handleWinningCondition(gameDetails);
-
-    if (didWon) break;
+    if (didWin(gameDetails)) {
+      broadcastWinningMessage(gameDetails.players);
+      break;
+    }
 
     gameDetails.currentPlayer = players[gameDetails.chance];
     broadcast(
@@ -220,14 +190,7 @@ const startGame = async (players) => {
       ` \n\n Now player ${gameDetails.currentPlayer.name} [${gameDetails.currentPlayer.id}] will Play!\n`,
     );
 
-    const { wasLocked, lockedPlayerId, chance, discardedCard } =
-      await handleUserInput(
-        gameDetails,
-      );
-    gameDetails.wasLocked = wasLocked;
-    gameDetails.lockedPlayerId = lockedPlayerId;
-    gameDetails.chance = chance;
-    gameDetails.discardedCard = discardedCard;
+    await handleUserInput(gameDetails);
   }
 };
 

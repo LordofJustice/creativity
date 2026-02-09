@@ -42,14 +42,16 @@ export const displayCard = async (
   id,
   { x, y },
   toShowFace = false,
+  toMove = false
 ) => {
   const toShow = toShowFace ? imageCode.trim().toUpperCase() : BACK_CARD;
   const image = escSeqOfImage(toShow, id);
-  await writeOnConnection(conn, moveCursorTo(x, y) + image);
+  const move = toMove ? 
+  await writeOnConnection(conn, moveCursorTo(x, y) + image + "\n");
   await delay(DELAY_BETWEEN_CARD_TRANSFER);
 };
 
-export const displayCards = async (currentPlayer, players) => {
+export const displayCards = async (currentPlayer, players, discardedCard) => {
   await writeOnConnection(currentPlayer.conn, SCREEN_CLEAR);
   const cardPos = { x: 0, y: 2 };
   const showFace = true;
@@ -96,5 +98,18 @@ export const displayCards = async (currentPlayer, players) => {
       }
       cardPos.x += CARD_WIDTH_OFFSET;
     }
+    cardPos.x = 0;
+    cardPos.y += CARD_HEIGHT_OFFSET;
+    await displayCard(
+      currentPlayer.conn,
+      discardedCard.imageCode,
+      discardedCard.id,
+      cardPos,
+      true,
+    );
+    await writeOnConnection(
+      currentPlayer.conn,
+      moveCursorTo(0, cardPos.y + CARD_HEIGHT_OFFSET),
+    );
   }
 };
