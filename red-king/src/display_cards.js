@@ -1,8 +1,6 @@
 import { delay } from "./red_king_lib.js";
 import { cardImages } from "./cards_image.js";
 import { writeOnConnection } from "./red_king_lib.js";
-import Table from "npm:cli-table3";
-import { brightGreen } from "jsr:@std/fmt/colors";
 
 const CARD_WIDTH_OFFSET = 12;
 const CARD_HEIGHT_OFFSET = 8;
@@ -11,21 +9,6 @@ const SCREEN_CLEAR = "\x1b[2J\x1b[H";
 const BACK_CARD = "BACK_GOLD";
 
 const moveCursorTo = (x, y) => `\x1b[${y};${x}H`;
-
-export const formateScoreBoard = (scoreBoard) => {
-  const table = new Table({
-    head: [
-      brightGreen("Rank"),
-      brightGreen("Player Id"),
-      brightGreen("Name"),
-      brightGreen("Score"),
-    ],
-  });
-  scoreBoard.forEach((player, i) => {
-    table.push([i + 1, player.id, player.name, player.score]);
-  });
-  return table.toString();
-};
 
 export const escSeqOfImage = (imageCode, cardId) => {
   const ESC = "\x1b";
@@ -46,7 +29,7 @@ export const displayCard = async (
 ) => {
   const toShow = toShowFace ? imageCode.trim().toUpperCase() : BACK_CARD;
   const image = escSeqOfImage(toShow, id);
-  const move = toMove ? moveCursorTo(x, y) : "/n";
+  const move = toMove ? moveCursorTo(x, y) : "";
   await writeOnConnection(conn, move + image + "\n");
   await delay(DELAY_BETWEEN_CARD_TRANSFER);
 };
@@ -54,11 +37,11 @@ export const displayCard = async (
 export const displayCards = async (currentPlayer, players, discardedCard) => {
   await writeOnConnection(currentPlayer.conn, SCREEN_CLEAR);
   const cardPos = { x: 0, y: 2 };
-  const showFace = true;
+  const showFace = false;
 
-  writeOnConnection(
+  await writeOnConnection(
     currentPlayer.conn,
-    `Hello Player : ${currentPlayer.name} ${currentPlayer.id}`,
+    `Hello Player : ${currentPlayer.name} [${currentPlayer.id}]`,
   );
 
   for (const card of currentPlayer.cards) {
@@ -78,11 +61,12 @@ export const displayCards = async (currentPlayer, players, discardedCard) => {
 
   const otherPlayers = players.filter((each) => each !== currentPlayer);
 
-  let pad = "\n\n\n";
+  let pad = "\n\n";
   for (const player of otherPlayers) {
     cardPos.y += CARD_HEIGHT_OFFSET;
     cardPos.x = 0;
-    writeOnConnection(
+
+    await writeOnConnection(
       currentPlayer.conn,
       `${pad}Player : ${player.name} [${player.id}]`,
     );

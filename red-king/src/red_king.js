@@ -1,11 +1,12 @@
 import { cards } from "./cards.js";
 import { shuffle } from "jsr:@std/random/shuffle";
+import { displayCard, displayCards } from "./display_cards.js";
 import {
-  displayCard,
-  displayCards,
-  formateScoreBoard,
-} from "./display_cards.js";
-import { broadcast, takeInput, writeOnConnection } from "./red_king_lib.js";
+  broadcast,
+  broadcastWinningMessage,
+  takeInput,
+  writeOnConnection,
+} from "./red_king_lib.js";
 
 const PLAYERS_COUNT = 2;
 const CARDS_TO_DISTRIBUTE = 4;
@@ -29,6 +30,7 @@ const drawCard = function* (cards) {
 const preGameSetup = async (server) => {
   let id = START_ID;
   const players = [];
+
   for await (const conn of server) {
     const player = { conn, cards: [] };
     const name = await takeInput(
@@ -40,13 +42,11 @@ const preGameSetup = async (server) => {
     player.name = name;
 
     players.push(player);
-
-    broadcast(
-      players,
+    const message =
       `\n\nWaiting for players....\nConnected : ${players.length}\nRemaining : ${
         PLAYERS_COUNT - players.length
-      }`,
-    );
+      }`;
+    broadcast(players, message);
     if (players.length === PLAYERS_COUNT) {
       break;
     }
@@ -54,21 +54,7 @@ const preGameSetup = async (server) => {
   return players;
 };
 
-const calculateScore = (cards) => {
-  return cards.reduce((acc, card) => {
-    const cardValue = card === null ? 0 : card.value;
-    return acc + cardValue;
-  }, 0);
-};
-
 const areAllCardsNull = (player) => player.cards.every((card) => card === null);
-
-const playersRanking = (players) =>
-  players.map(({ name, cards, id }) => ({
-    id,
-    name,
-    score: calculateScore(cards),
-  })).sort((a, b) => a - b);
 
 const didWin = ({ chance, players, wasLocked, lockedPlayerId }) => {
   const previousPlayer =
@@ -76,15 +62,6 @@ const didWin = ({ chance, players, wasLocked, lockedPlayerId }) => {
   const currentPlayer = players[chance];
   return areAllCardsNull(previousPlayer) ||
     wasLocked && lockedPlayerId === currentPlayer.id;
-};
-
-const broadcastWinningMessage = (players) => {
-  const scoreBoard = playersRanking(players); //players
-  const wonPlayer = scoreBoard[0];
-  const formattedScoreBoard = formateScoreBoard(scoreBoard);
-  const winningMessage =
-    `\n\n?********   Player ${wonPlayer.name} [${wonPlayer.id}] Has Won!  *******\n${formattedScoreBoard}\n`;
-  broadcast(players, winningMessage);
 };
 
 const isValidInput = (playerInput, player) =>
@@ -105,7 +82,7 @@ const parseCommand = (playerCommand, player) => {
 const handleInputForDrawCard = async (currentPlayer) => {
   const playerCommand = await takeInput(
     currentPlayer.conn,
-    "\n\ndiscard[d] or swap[s] <card number> : ",
+    "\n\nType discard[d] or swap[s <card number>] : ",
   );
   const { succeed, command, arg } = parseCommand(playerCommand, currentPlayer);
   if (!succeed) {
@@ -128,7 +105,9 @@ const handleDrawCondition = async (
     true,
     false,
   );
+
   const { command, arg } = await handleInputForDrawCard(currentPlayer);
+
   if (command === "DISCARD") {
     discarded = drawnCard;
   } else if (command === "SWAP") {
@@ -164,6 +143,31 @@ const handleUserInput = async (gameDetails) => {
   }
 };
 
+const initializeGame = async (gameDetails) => {
+  while (true) {
+    for (const player of gameDetails.players) {
+      await displayCards(
+        player,
+        gameDetails.players,
+        gameDetails.discardedCard,
+      );
+    }
+
+    if (didWin(gameDetails)) {
+      broadcastWinningMessage(gameDetails.players);
+      break;
+    }
+
+    gameDetails.currentPlayer = gameDetails.players[gameDetails.chance];
+    broadcast(
+      gameDetails.players,
+      ` \n\n Now player ${gameDetails.currentPlayer.name} [${gameDetails.currentPlayer.id}] will Play!\n`,
+    );
+
+    await handleUserInput(gameDetails);
+  }
+};
+
 const startGame = async (players) => {
   const shuffledCards = shuffle(cards);
   const cardDistributor = drawCard(shuffledCards);
@@ -178,24 +182,7 @@ const startGame = async (players) => {
     discardedCard: { id: 1000, imageCode: "BACK_BLUE" },
   };
 
-  while (true) {
-    for (const player of gameDetails.players) {
-      await displayCards(player, players, gameDetails.discardedCard);
-    }
-
-    if (didWin(gameDetails)) {
-      broadcastWinningMessage(gameDetails.players);
-      break;
-    }
-
-    gameDetails.currentPlayer = players[gameDetails.chance];
-    broadcast(
-      players,
-      ` \n\n Now player ${gameDetails.currentPlayer.name} [${gameDetails.currentPlayer.id}] will Play!\n`,
-    );
-
-    await handleUserInput(gameDetails);
-  }
+  await initializeGame(gameDetails);
 };
 
 export const startRedKingServer = async (port, hostname) => {
