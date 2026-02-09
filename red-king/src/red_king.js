@@ -1,9 +1,15 @@
 import { cards } from "./cards.js";
 import { shuffle } from "jsr:@std/random/shuffle";
-import { displayCard, displayCards } from "./display_cards.js";
+import {
+  displayCard,
+  displayCards,
+  revealInitialCards,
+} from "./display_cards.js";
 import {
   broadcast,
   broadcastWinningMessage,
+  checkWin,
+  delay,
   takeInput,
   writeOnConnection,
 } from "./red_king_lib.js";
@@ -53,71 +59,78 @@ const preGameSetup = async (server) => {
   return players;
 };
 
-const areAllCardsNull = (player) => player.cards.every((card) => card === null);
+const isBetween = (input, start, end) => input >= start && input <= end;
 
-const didWin = ({ chance, players, wasLocked, lockedPlayerId }) => {
-  const previousPlayer =
-    players[(chance + players.length - 1) % players.length];
-  const currentPlayer = players[chance];
-  return areAllCardsNull(previousPlayer) ||
-    wasLocked && lockedPlayerId === currentPlayer.id;
-};
+const doesCardExists = (player, input) => player.cards[input - 1] !== null;
 
-const isValidInput = (playerInput, player) =>
-  /^\d+$/.test(playerInput) && (+playerInput > 0 &&
-    +playerInput <= CARDS_TO_DISTRIBUTE) &&
-  !player.cards[+playerInput - 1] !== null;
+const isValidInput = (input, player) =>
+  Number.isInteger(input) && isBetween(input, 1, CARDS_TO_DISTRIBUTE) &&
+  doesCardExists(player, input);
 
-const parseCommand = (playerCommand, player) => {
-  const [command, arg] = playerCommand.trim().toUpperCase().split(/\s+/g);
-  if (command === "S" && isValidInput(arg, player)) {
-    return { succeed: true, command: "SWAP", arg: +arg };
-  } else if (command === "D") {
+const validateCommand = ({ command, arg }, player) => {
+  if (command.toUpperCase() === "S" && isValidInput(+arg, player)) {
+    return { succeed: true, command: "SWAP", arg: parseInt(arg) };
+  }
+  if (command.toUpperCase() === "D") {
     return { succeed: true, command: "DISCARD" };
   }
-  return { succeed: false, error: "invalid command" };
+  return { succeed: false };
 };
 
-const handleInputForDrawCard = async (currentPlayer) => {
-  const playerCommand = await takeInput(
-    currentPlayer.conn,
-    "\n\nType discard[d] or swap[s <card number>] : ",
-  );
-  const { succeed, command, arg } = parseCommand(playerCommand, currentPlayer);
-  if (!succeed) {
-    await writeOnConnection(currentPlayer.conn, "INVALID COMMAND OR ARGUMENT");
-    return handleInputForDrawCard(currentPlayer);
-  }
+const parseCommand = (playerCommand) => {
+  const [command, arg] = playerCommand.trim().toUpperCase().split(/\s+/g);
   return { command, arg };
 };
 
-const handleDrawCondition = async (gameDetails) => {
+const parseInputForDrawCard = async (player) => {
+  while (true) {
+    const playerCommand = await takeInput(
+      player.conn,
+      "\n\nType discard[d] or swap[s <card number>] : ",
+    );
+
+    const parsed = parseCommand(playerCommand, player);
+    const { succeed, command, arg } = validateCommand(parsed, player);
+
+    if (succeed) {
+      return { command, arg };
+    }
+
+    await writeOnConnection(player.conn, "INVALID COMMAND ❌\n");
+  }
+};
+
+const nextPlayer = (gameDetails) =>
+  (gameDetails.chance + 1) % gameDetails.players.length;
+
+const handleDrawTurn = async (gameDetails) => {
   const { currentPlayer } = gameDetails;
   const drawnCard = gameDetails.cardDistributor.next().value;
   displayCard(
     currentPlayer.conn,
     drawnCard.imageCode,
     drawnCard.id,
-    { x: 0, y: 0 },
+    { x: 1, y: 1 },
     true,
     false,
   );
 
-  const { command, arg } = await handleInputForDrawCard(currentPlayer);
+  const { command, arg } = await parseInputForDrawCard(currentPlayer);
 
   if (command === "DISCARD") {
     gameDetails.discardedCard = drawnCard;
-  } else if (command === "SWAP") {
+  }
+  if (command === "SWAP") {
     gameDetails.discardedCard = currentPlayer.cards[arg - 1];
     currentPlayer.cards[arg - 1] = drawnCard;
   }
-  gameDetails.chance = (gameDetails.chance + 1) % gameDetails.players.length;
+  gameDetails.chance = nextPlayer(gameDetails);
 };
 
-const handleLockCondition = (gameDetails) => {
+const lockGame = (gameDetails) => {
   gameDetails.wasLocked = true;
-  gameDetails.lockedPlayerId = gameDetails.currentPlayer.id;
-  gameDetails.chance = (gameDetails.chance + 1) % gameDetails.players.length;
+  gameDetails.lockedBy = gameDetails.currentPlayer.id;
+  gameDetails.chance = nextPlayer(gameDetails);
   return;
 };
 
@@ -126,25 +139,25 @@ const isLockCommand = (playerInput) => playerInput.trim().toUpperCase() === "L";
 const isDrawCommand = (playerInput) => playerInput.trim().toUpperCase() === "D";
 
 const handleUserInput = async (gameDetails) => {
-  const inputMessage =
-    `\n\nPlayer ${gameDetails.currentPlayer.name} [${gameDetails.currentPlayer.id}] It's Your Turn :
-      choose [d] for draw or [l] for lock :`;
+  while (true) {
+    const inputMessage =
+      `\n\nPlayer ${gameDetails.currentPlayer.name} [${gameDetails.currentPlayer.id}] It's Your Turn :\nchoose [d] for draw or [l] for lock :`;
 
-  const playerInput = await takeInput(
-    gameDetails.currentPlayer.conn,
-    inputMessage,
-  );
+    const playerInput = await takeInput(
+      gameDetails.currentPlayer.conn,
+      inputMessage,
+    );
 
-  if (isDrawCommand(playerInput)) {
-    await handleDrawCondition(gameDetails);
-    return;
+    if (isDrawCommand(playerInput)) {
+      await handleDrawTurn(gameDetails);
+      return;
+    }
+
+    if (!gameDetails.wasLocked && isLockCommand(playerInput)) {
+      lockGame(gameDetails);
+      return;
+    }
   }
-  if (!gameDetails.wasLocked && isLockCommand(playerInput)) {
-    handleLockCondition(gameDetails);
-    return;
-  }
-  await handleUserInput(gameDetails);
-  return;
 };
 
 const startGame = async (gameDetails) => {
@@ -157,12 +170,13 @@ const startGame = async (gameDetails) => {
       );
     }
 
-    if (didWin(gameDetails)) {
+    gameDetails.currentPlayer = gameDetails.players[gameDetails.chance];
+
+    if (checkWin(gameDetails)) {
       await broadcastWinningMessage(gameDetails.players);
       break;
     }
 
-    gameDetails.currentPlayer = gameDetails.players[gameDetails.chance];
     const playChanceMessage =
       `\n Now player ${gameDetails.currentPlayer.name} [${gameDetails.currentPlayer.id}] will Play!\n`;
     await broadcast(gameDetails.players, playChanceMessage);
@@ -175,7 +189,7 @@ const initGameDetails = (players, cardDistributor) => ({
   players,
   chance: 0,
   wasLocked: false,
-  lockedPlayerId: undefined,
+  lockedBy: null,
   cardDistributor,
   discardedCard: { id: 1000, imageCode: "BACK_BLUE" },
 });
@@ -187,6 +201,8 @@ const initializeGame = async (players) => {
 
   const gameDetails = initGameDetails(players, cardDistributor);
 
+  await revealInitialCards(gameDetails, 2);
+  await delay(10000);
   await startGame(gameDetails);
 };
 

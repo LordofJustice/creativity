@@ -12,10 +12,10 @@ const moveCursorTo = (x, y) => `\x1b[${y};${x}H`;
 
 export const escSeqOfImage = (imageCode, cardId) => {
   const ESC = "\x1b";
+  const ST = "\x1b\\";
   const card = cardImages[imageCode];
   const cardImage = ESC + "_G" + `q=2,i=${cardId}` +
-    `,a=T,f=100;` + card +
-    ESC + "\\";
+    `,a=T,f=100;` + card + ST;
   return cardImage;
 };
 
@@ -23,19 +23,21 @@ export const displayCard = async (
   conn,
   imageCode,
   id,
-  { x, y },
+  cardPos,
   toShowFace = false,
   moveCursor = true,
 ) => {
   const toShow = toShowFace ? imageCode.trim().toUpperCase() : BACK_CARD;
   const image = escSeqOfImage(toShow, id);
-  const move = moveCursor ? moveCursorTo(x, y) : "";
+  const move = moveCursor ? moveCursorTo(cardPos.x, cardPos.y) : "";
   await writeOnConnection(conn, move + image + "\n");
   await delay(DELAY_BETWEEN_CARD_TRANSFER);
 };
 
-const showPlayerCards = async (conn, cards, cardPos, showFace = false) => {
+const showPlayerCards = async (conn, cards, cardPos, revealCount) => {
+  let index = 0;
   for (const card of cards) {
+    const showFace = index < revealCount;
     if (card !== null) {
       await displayCard(
         conn,
@@ -45,6 +47,7 @@ const showPlayerCards = async (conn, cards, cardPos, showFace = false) => {
         showFace,
       );
     }
+    index++;
     cardPos.x += CARD_WIDTH_OFFSET;
   }
   cardPos.x = 1;
@@ -74,21 +77,42 @@ const showOtherPlayerCards = async (otherPlayers, cardPos, currentPlayer) => {
       currentPlayer.conn,
       `Player : ${player.name} [${player.id}]`,
     );
-    await showPlayerCards(currentPlayer.conn, player.cards, cardPos, false);
+    await showPlayerCards(currentPlayer.conn, player.cards, cardPos, 0);
   }
 };
 
-export const displayCards = async (currentPlayer, players, discardedCard) => {
+export const displayCards = async (
+  currentPlayer,
+  players,
+  discardedCard,
+  revealCount,
+) => {
   await writeOnConnection(currentPlayer.conn, SCREEN_CLEAR);
-  const cardPos = { x: 1, y: 2 }; //terminal grid starts from 1,1
+  const cardPos = { x: 1, y: 2 };
 
   await writeOnConnection(
     currentPlayer.conn,
     `Hello Player : ${currentPlayer.name} [${currentPlayer.id}]`,
   );
-  await showPlayerCards(currentPlayer.conn, currentPlayer.cards, cardPos);
+  await showPlayerCards(
+    currentPlayer.conn,
+    currentPlayer.cards,
+    cardPos,
+    revealCount,
+  );
 
   const otherPlayers = players.filter((player) => player !== currentPlayer);
   await showOtherPlayerCards(otherPlayers, cardPos, currentPlayer);
   await displayDiscardedCard(currentPlayer.conn, discardedCard, cardPos);
+};
+
+export const revealInitialCards = async (gameDetails, revealCount) => {
+  for await (const player of gameDetails.players) {
+    await displayCards(
+      player,
+      gameDetails.players,
+      gameDetails.discardedCard,
+      revealCount,
+    );
+  }
 };

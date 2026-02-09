@@ -73,3 +73,15 @@ export const broadcastWinningMessage = (players) => {
     `\n\n?********   Player ${wonPlayer.name} [${wonPlayer.id}] Has Won!  *******\n${formattedScoreBoard}\n`;
   broadcast(players, winningMessage);
 };
+
+const areAllCardsNull = (player) => player.cards.every((card) => card === null);
+
+export const checkWin = (
+  { chance, players, currentPlayer, wasLocked, lockedBy },
+) => {
+  const previousPlayer =
+    players[(chance + players.length - 1) % players.length];
+
+  return areAllCardsNull(previousPlayer) ||
+    wasLocked && lockedBy === currentPlayer.id;
+};
