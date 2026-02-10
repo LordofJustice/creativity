@@ -106,7 +106,7 @@ export const displayCards = async (
   await displayDiscardedCard(currentPlayer.conn, discardedCard, cardPos);
 };
 
-export const revealInitialCards = async (gameDetails, revealCount) => {
+export const showCards = async (gameDetails, revealCount) => {
   for await (const player of gameDetails.players) {
     await displayCards(
       player,

@@ -2,9 +2,9 @@ import Table from "npm:cli-table3";
 import { brightGreen } from "jsr:@std/fmt/colors";
 
 export const delay = async (time) => {
-  await new Promise((resolve) => {
+  return await new Promise((resolve) => {
     setTimeout(() => {
-      resolve(1);
+      resolve(null);
     }, time);
   });
 };
@@ -14,7 +14,7 @@ const encode = (text) => new TextEncoder().encode(text);
 export const decode = (arrBuffer) => new TextDecoder().decode(arrBuffer);
 
 export const takeInput = async (conn, message) => {
-  const buff = new Uint8Array(10);
+  const buff = new Uint8Array(1024);
   await writeOnConnection(conn, message);
   const count = await conn.read(buff);
   const rawData = buff.slice(0, count);

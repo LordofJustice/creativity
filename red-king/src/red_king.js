@@ -1,10 +1,6 @@
 import { cards } from "./cards.js";
 import { shuffle } from "jsr:@std/random/shuffle";
-import {
-  displayCard,
-  displayCards,
-  revealInitialCards,
-} from "./display_cards.js";
+import { displayCard, displayCards, showCards } from "./display_cards.js";
 import {
   broadcast,
   broadcastWinningMessage,
@@ -68,10 +64,10 @@ const isValidInput = (input, player) =>
   doesCardExists(player, input);
 
 const validateCommand = ({ command, arg }, player) => {
-  if (command.toUpperCase() === "S" && isValidInput(+arg, player)) {
+  if (command === "S" && isValidInput(+arg, player)) {
     return { succeed: true, command: "SWAP", arg: parseInt(arg) };
   }
-  if (command.toUpperCase() === "D") {
+  if (command === "D") {
     return { succeed: true, command: "DISCARD" };
   }
   return { succeed: false };
@@ -150,31 +146,74 @@ const handleUserInput = async (gameDetails) => {
 
     if (isDrawCommand(playerInput)) {
       await handleDrawTurn(gameDetails);
+      gameDetails.lastMainCommand = "DRAW";
       return;
     }
 
     if (!gameDetails.wasLocked && isLockCommand(playerInput)) {
       lockGame(gameDetails);
+      gameDetails.lastMainCommand = "LOCK";
       return;
     }
   }
 };
 
-const startGame = async (gameDetails) => {
-  while (true) {
-    for (const player of gameDetails.players) {
-      await displayCards(
-        player,
-        gameDetails.players,
-        gameDetails.discardedCard,
-      );
+const readInputWithTime = (player, duration) => {
+  const message = ">>";
+  return Promise.race([takeInput(player.conn, message), delay(duration)]);
+};
+
+const addPenalty = (player, cardDistributor) => {
+  player.cards.push(cardDistributor.next().value);
+};
+
+const collectDiscard = async (gameDetails, duration) => {
+  const tasks = gameDetails.players.map(async (player) => {
+    const input = await readInputWithTime(player, duration);
+
+    if (input === null) return;
+
+    const { command, arg } = parseCommand(input);
+
+    if (command !== "D" && !isValidInput(+arg)) {
+      await writeOnConnection(player.conn, "Invalid Command");
     }
+
+    if (player.cards[+arg - 1].rank !== gameDetails.discardedCard.rank) {
+      addPenalty(player, gameDetails.cardDistributor);
+    } else {
+      gameDetails.discardedCard = player.cards[+arg - 1];
+      player.cards[+arg - 1] = null;
+    }
+  });
+  await Promise.all(tasks);
+};
+
+const closeConnections = (players) => {
+  players.forEach(({conn}) => {
+    conn.close()
+  });
+}
+
+const startGame = async (gameDetails) => {
+  let duration = 0;
+  while (true) {
+    if (duration !== 0 && gameDetails.lastMainCommand !== "LOCK") {
+      await broadcast(
+        gameDetails.players,
+        `YOU HAVE ${duration / 1000} sec to discard your cards\n`,
+      );
+      await collectDiscard(gameDetails, duration);
+    }
+    await showCards(gameDetails, 0);
+    duration = 10000;
 
     gameDetails.currentPlayer = gameDetails.players[gameDetails.chance];
 
     if (checkWin(gameDetails)) {
       await broadcastWinningMessage(gameDetails.players);
-      break;
+      closeConnections(gameDetails.players);
+      return;
     }
 
     const playChanceMessage =
@@ -182,6 +221,7 @@ const startGame = async (gameDetails) => {
     await broadcast(gameDetails.players, playChanceMessage);
 
     await handleUserInput(gameDetails);
+    await showCards(gameDetails, 0);
   }
 };
 
@@ -201,8 +241,8 @@ const initializeGame = async (players) => {
 
   const gameDetails = initGameDetails(players, cardDistributor);
 
-  await revealInitialCards(gameDetails, 2);
-  await delay(10000);
+  await showCards(gameDetails, 2);
+  await delay(7000);
   await startGame(gameDetails);
 };
 
